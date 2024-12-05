@@ -1,0 +1,150 @@
+
+function wcacrSetCookie(name, value, days) {
+	var expires = "";
+	if (days) {
+		var date = new Date();
+		date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+		expires = "; expires=" + date.toUTCString();
+	}
+	document.cookie = name + "=" + (value || "") + expires + "; path=/";
+}
+function wcacrGetCookie(name) {
+	var nameEQ = name + "=";
+	var ca = document.cookie.split(';');
+	for (var i = 0; i < ca.length; i++) {
+		var c = ca[i];
+		while (c.charAt(0) == ' ') {
+			c = c.substring(1, c.length);
+		}
+		if (c.indexOf(nameEQ) == 0) {
+			return c.substring(nameEQ.length, c.length);
+		}
+	}
+	return null;
+}
+
+// Popup
+// We used to use the window load event but it caused issues when they use cloudflare's rocket loader
+// But the document ready event works well with the rocket loader.
+jQuery(document).on('ready', function () {
+	var $popup = jQuery('.wcacr-country-selector-popup');
+	if (!$popup.length) {
+		return true;
+	}
+	var cookieName = 'wcacr_first_time';
+	if (wcacrGetCookie(cookieName)) {
+		return true;
+	}
+	if (!jQuery('.wcacr-country-selector-popup ul li').length) {
+		return true;
+	}
+
+	jQuery('.wcacr-country-selector-popup-shadow, .wcacr-country-selector-popup').appendTo(jQuery('body'));
+	jQuery('.wcacr-country-selector-popup-shadow, .wcacr-country-selector-popup').addClass('wcacr-visible');
+	jQuery('body').addClass('wcacr-popup-visible');
+	$popup.find('.wcacr-close').click(function (e) {
+		e.preventDefault();
+
+		jQuery('.wcacr-country-selector-popup-shadow, .wcacr-country-selector-popup').removeClass('wcacr-visible');
+		jQuery('body').removeClass('wcacr-popup-visible');
+	});
+	var $currentCountry = $popup.find('.wcacr-current-country-link');
+	$currentCountry.removeClass('menu-item');
+	$currentCountry.removeClass('menu-item-has-children');
+	$currentCountry.removeClass('dropdown');
+	$currentCountry.removeClass('ubermenu-item');
+	$currentCountry.removeClass('ubermenu-item-has-children');
+	$currentCountry.removeClass('ubermenu-item-level-0');
+	$currentCountry.removeClass('ubermenu-column');
+	$currentCountry.removeClass('ubermenu-has-submenu-drop');
+	$currentCountry.removeClass('ubermenu-target');
+	$currentCountry.removeClass('ubermenu-item-layout-default');
+	$currentCountry.removeClass('ubermenu-item-layout-text_only');
+
+	var currentCountryName = $currentCountry.data('country-name');
+
+	if ($currentCountry.text().indexOf(currentCountryName) < 0) {
+		$currentCountry.append(currentCountryName);
+	}
+	$currentCountry.click(function (e) {
+		e.preventDefault();
+
+		// If this link is inside the popup, automatically close the popup when the link is clicked
+		if (jQuery(this).parents('.wcacr-country-selector-popup').length) {
+			jQuery('.wcacr-country-selector-popup .wcacr-close').click();
+		}
+	});
+	var $dropdownMenu = $popup.find('ul ul');
+	$dropdownMenu.removeClass('sub-menu').removeClass('dropdown-menu');
+
+	if (wcacr_country_selector_data.allow_to_close) {
+		wcacrSetCookie(cookieName, 1, 30);
+	} else {
+		$popup.find('a[class*="wccr-location-code"]').click(function (e) {
+			wcacrSetCookie(cookieName, 1, 30);
+		});
+	}
+
+	// Remove the menu-item class because the class is used by the WC fragment updates
+	// We don't want to refresh this and lose our html modifications
+	$popup.find('li.wccr-country-selector.menu-item').removeClass('menu-item');
+
+	$popup.css({
+		top: (jQuery(window).height() - $popup.height()) / 2,
+		left: jQuery(window).width() > 500 ? (jQuery(window).width() - $popup.width()) / 2 : ''
+	});
+});
+
+function wcacrRemoveCountrySelectorFromCache(cacheKey) {
+	try {
+		var wc_fragments = jQuery.parseJSON(sessionStorage.getItem(cacheKey));
+		if (typeof wc_fragments['li.wccr-country-selector.menu-item'] !== 'undefined') {
+			delete wc_fragments['li.wccr-country-selector.menu-item'];
+			sessionStorage.setItem(cacheKey, JSON.stringify(wc_fragments));
+		}
+	} catch (err) {
+	}
+}
+// The country dropdown fragment must not be cached, otherwise it shows the old country after we select another country
+jQuery(document).ready(function () {
+	jQuery(document.body).on('wc_fragments_refreshed', function () {
+		//		console.log('run');
+		wcacrRemoveCountrySelectorFromCache(wc_cart_fragments_params.fragment_name);
+	});
+});
+
+// WC Blocks
+jQuery(document).on('ready', function () {
+	if (typeof window.wp === 'undefined' || typeof window.wc === 'undefined' || typeof window.wc.wcBlocksData === 'undefined' || ! jQuery('.wp-block-woocommerce-checkout').length ) {
+		return true;
+	}
+
+	var initialCartData = window.wp.data.select(window.wc.wcBlocksData.CART_STORE_KEY).getCartData();
+	var lastErrors = initialCartData.errors;
+
+	wp.data.subscribe(() => {
+		var newCartData = window.wp.data.select(window.wc.wcBlocksData.CART_STORE_KEY).getCartData();
+		if (initialCartData.extensions.wcacr && newCartData.extensions.wcacr && initialCartData.extensions.wcacr.wcacr_country_selector_html !== newCartData.extensions.wcacr.wcacr_country_selector_html) {
+			console.log('cart changed', initialCartData, newCartData);
+			initialCartData = newCartData;
+			jQuery('li.wccr-country-selector.menu-item').replaceWith(newCartData.extensions.wcacr.wcacr_country_selector_html);
+		}
+
+		if (newCartData.errors && newCartData.errors !== lastErrors.errors) {
+			newCartData.errors.forEach(function (error) {
+				if (error.code === 'wcacr_wrong_country') {
+
+					// Timeout is necessary, otherwise the notice won't be displayed
+					setTimeout(function () {
+						var response = wp.data.dispatch('core/notices').createNotice('error', error.message, {
+							id: error.code,
+							context: 'wc/cart',
+							isDismissible: false,
+						});
+					}, 800);
+				}
+			});
+			lastErrors.errors = newCartData.errors;
+		}
+	}, window.wc.wcBlocksData.CART_STORE_KEY);
+});

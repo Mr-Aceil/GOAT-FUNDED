@@ -1,0 +1,12 @@
+.korapay-payment{
+	display: none
+}
+.korapay-payment td:nth-child(2){
+	background: #e74c3c;
+	color: #fff;
+	padding: 10px;
+	border-radius: 100px;
+}
+.woocommerce-checkout-review-order-table tr td:nth-child(2){
+	text-align: center !important
+}
